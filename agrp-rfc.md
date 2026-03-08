@@ -63,7 +63,7 @@ Without AGRP, the current protocol stack solves individual links such as editor-
 
 ## High-Level Exchange View
 
-At runtime, AGRP centers work around Exchanges. A Realm is an optional stateful attachment that the Control Plane may bind to one or more Exchanges. Humans and bridges connect to a specific authorized Exchange, the Control Plane and ARLM manage lifecycle around any shared realm state when present, and every agent is represented through a 1:1 attached sidecar. The sidecar speaks AGSP, receives delegated requests plus signed mandates, and invokes or polls the passive agent locally.
+At runtime, AGRP centers work around Exchanges. A Realm is an optional stateful attachment that the Control Plane may bind to one or more Exchanges. Humans and bridges connect to a specific authorized Exchange, the Control Plane and ARLM manage lifecycle around any shared realm state when present, and every agent is represented through a 1:1 attached sidecar. The sidecar speaks AGSP, receives delegated requests plus signed mandates, and forwards them to the agent over ACP.
 
 ```
  [Human User] ------------------------------------------------\
@@ -245,6 +245,38 @@ An abstraction over execution environments (Kubernetes, native-fork, serverless,
 - Suspend and resume environment/resource handles
 
 The ARLM is pluggable — the protocol is agnostic to the underlying runtime. The ARLM connects to Exchanges as an AGSP participant with role `arlm`.
+
+Illustrative YAML example of how an ARLM could configure a Claude-based ACP agent for spawn:
+
+```yaml
+runtime_profiles:
+  claude-acp:
+    agent:
+      kind: claude
+      harness: claude
+      launch:
+        command: /opt/agents/claude-acp-launcher
+        args: []
+        env:
+          REALM_ID: myns/myproject
+          WORKDIR: /var/lib/agrp/realms/myns-myproject
+      acp:
+        transport: stdio
+        protocol: acp
+    sidecar:
+      join:
+        protocol: agsp
+        role: agent
+        participant_name: claude
+        realm: myns/myproject
+      mandate_verification:
+        required: true
+    wiring:
+      agent_channel: acp
+      exchange_channel: agsp
+```
+
+This example is non-normative. The exact Claude launcher path, arguments, and environment variables are implementation-specific; AGRP only requires that the ARLM start the agent and attached sidecar and wire **ACP** between sidecar and agent and **AGSP** between sidecar and Exchange.
 
 ---
 
@@ -523,7 +555,7 @@ Delegation is not a separate AGSP primitive. A client or bridge delegates by sen
 
 Delegation carries only the selected message content, not an implicit reference to prior exchange history. Delegation targets a single agent, and the base realm default is that any member may delegate unless the realm policy overrides it.
 
-When a human delegates to a realm-managed sidecar agent, the Exchange always attaches an inline signed `mandate` claim that captures the authorized scope for that request. The issuing Exchange signs the mandate, enforces authorization before issuing it, and the attached sidecar verifies the mandate for local enforcement when invoking the passive agent.
+When a human delegates to a realm-managed sidecar agent, the Exchange always attaches an inline signed `mandate` claim that captures the authorized scope for that request. The issuing Exchange signs the mandate, enforces authorization before issuing it, and the attached sidecar verifies the mandate for local enforcement before forwarding the request to the agent over ACP.
 
 In base AGRP v1, mandated delegation targets are realm-managed sidecar agents.
 
