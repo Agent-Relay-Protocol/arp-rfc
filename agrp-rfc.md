@@ -851,6 +851,26 @@ The following are explicitly **not** part of this RFC:
 
 ---
 
+## 15. References
+
+The following external protocols, interfaces, and standards are referenced in this document:
+
+- **MCP (Model Context Protocol):** https://modelcontextprotocol.io/
+- **ACP (Agent Client Protocol):** https://zed.dev/acp
+- **A2A (Agent2Agent Protocol):** https://a2a-protocol.org/dev/
+- **AGENTS.md:** https://agents.md/
+- **JSON-RPC 2.0:** https://www.jsonrpc.org/specification
+- **HTTP Semantics (RFC 9110):** https://www.rfc-editor.org/rfc/rfc9110
+- **gRPC:** https://grpc.io/docs/what-is-grpc/
+- **WebSocket Protocol (RFC 6455):** https://www.rfc-editor.org/rfc/rfc6455
+- **Transmission Control Protocol (TCP, RFC 9293):** https://www.rfc-editor.org/rfc/rfc9293
+- **Raft Consensus Algorithm:** https://raft.github.io/
+- **Kubernetes:** https://kubernetes.io/docs/concepts/overview/
+- **Container Network Interface (CNI):** https://www.cni.dev/
+- **FUSE (Filesystem in Userspace):** https://github.com/libfuse/libfuse
+
+---
+
 ## Author's Address
 
 Aleksei Kudriashov  
