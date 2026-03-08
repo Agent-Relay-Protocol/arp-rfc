@@ -1,87 +1,87 @@
 # Agent Relay Protocol
 
-Статус: Draft
-Дата: 2026-03-07
+Status: Draft
+Date: 2026-03-07
 
 ---
 
 ## 1. Problem Statement
 
-Агенты всё чаще работают не в изоляции, а вместе с людьми — в общем коде, общих документах, общих задачах. Индустрия уже построила работающие продукты: Devin, GitHub Copilot coding agent, Cursor Cloud Agents, Factory Droids, Replit Agent. Каждый из них реализует один и тот же паттерн — **shared human/agent workspace** — но делает это по-своему, с проприетарными API и закрытыми моделями.
+Agents increasingly work not in isolation but alongside humans — in shared code, shared documents, shared tasks. The industry has already built working products: Devin, GitHub Copilot coding agent, Cursor Cloud Agents, Factory Droids, Replit Agent. Each implements the same pattern — **shared human/agent workspace** — but does it in its own way, with proprietary APIs and closed models.
 
-Сегодня есть протоколы для отдельных слоёв:
-- **MCP** стандартизирует доступ к tools и контексту — и стал де-факто "tool bus" во всех зрелых agent-платформах.
-- **A2A** (Google) описывает взаимодействие между агентами.
-- **ACP** определяет как IDE и клиенты взаимодействуют с агентом.
+Today there are protocols for individual layers:
+- **MCP** standardizes access to tools and context — and has become the de facto "tool bus" across all mature agent platforms.
+- **A2A** (Google) describes agent-to-agent interaction.
+- **ACP** defines how IDEs and clients interact with an agent.
 
-Но ни один из них не отвечает на вопрос: **как создать общее рабочее пространство**, в котором люди и агенты вместе работают над задачей в контролируемой среде с общим filesystem, tools, permissions и history?
+But none of them answer the question: **how to create a shared workspace** where humans and agents work together on a task in a controlled environment with shared filesystem, tools, permissions, and history?
 
-Без такого протокола каждая платформа изобретает это заново: свою модель workspace, свой способ запуска агентов, свою систему прав и approvals, свою изоляцию среды. Практика показывает, что успешные системы сходятся к одним и тем же паттернам — RBAC + runtime guardrails, async agent + human review, MCP как tool bus, checkpoints и rollbacks — но реализуют их несовместимо. Агенты оказываются привязаны к конкретной платформе. Нет переносимости, нет interoperability, нет единой модели безопасности.
+Without such a protocol, every platform reinvents this from scratch: its own workspace model, its own way to launch agents, its own permission and approval system, its own environment isolation. Practice shows that successful systems converge on the same patterns — RBAC + runtime guardrails, async agent + human review, MCP as tool bus, checkpoints and rollbacks — but implement them incompatibly. Agents end up locked to a specific platform. No portability, no interoperability, no unified security model.
 
-Agent Relay Protocol закрывает этот gap — стандартный протокол для построения human/agent сред совместной работы. У протокола могут быть разные реализации, но благодаря общему стандарту компоненты — runtimes, agents, environments, tools — могут работать друг с другом и быть взаимозаменяемыми.
+Agent Relay Protocol closes this gap — a standard protocol for building human/agent collaborative environments. The protocol can have different implementations, but thanks to a common standard, components — runtimes, agents, environments, tools — can work with each other and be interchangeable.
 
-## 2. Сценарии использования
+## 2. Use Cases
 
-**Код.** Программист и продукт-менеджер работают над одной кодовой базой в одном workspace. В workspace работают агенты. Код смонтирован в workspace environment, приложение запущено, участники обсуждают, меняют код и тестируют результат.
+**Code.** A developer and product manager work on the same codebase in one workspace. Agents operate within the workspace. Code is mounted in the workspace environment, the application is running, participants discuss, modify code, and test results.
 
-**Бизнес.** Продавец и маркетолог работают над лидом в одном workspace. Агенты помогают анализировать аккаунт, CRM-данные и следующие шаги. В workspace environment — документы, заметки, CRM-контекст и tools.
+**Business.** A salesperson and marketer work on a lead in one workspace. Agents help analyze the account, CRM data, and next steps. The workspace environment contains documents, notes, CRM context, and tools.
 
-**Incident Response.** На алерт создаётся workspace, подключаются on-call инженеры и агенты. Агенты тянут логи, метрики, трейсы и анализируют причину. Люди и агенты вместе дебажат и фиксят в одной среде.
+**Incident Response.** A workspace is created on an alert, on-call engineers and agents connect. Agents pull logs, metrics, traces, and analyze the root cause. Humans and agents debug and fix together in one environment.
 
-**Data Analysis.** Аналитик и data engineer работают в одном workspace. Агенты помогают писать SQL, строить визуализации, проверять данные. В environment — подключение к базам, notebooks, датасеты.
+**Data Analysis.** An analyst and data engineer work in one workspace. Agents help write SQL, build visualizations, validate data. The environment includes database connections, notebooks, and datasets.
 
-**Code Review.** На pull request автоматически создаётся workspace. В него подключаются reviewers и агенты. Агенты анализируют diff, проверяют code style, ищут баги и security issues. Reviewers видят результаты анализа, обсуждают изменения с агентами и друг с другом, и принимают решение — всё в одном workspace с доступом к коду и CI.
+**Code Review.** A workspace is automatically created on a pull request. Reviewers and agents connect to it. Agents analyze the diff, check code style, look for bugs and security issues. Reviewers see analysis results, discuss changes with agents and each other, and make a decision — all in one workspace with access to code and CI.
 
-**Pipeline.** Workspace-ы связаны в цепочку через события. PR → code review workspace эмитит `review.completed` → deploy workspace создаётся автоматически → после деплоя эмитит `deploy.completed` → monitoring workspace следит за метриками. Каждый шаг — полноценный workspace с людьми и агентами, без внешнего оркестратора.
+**Pipeline.** Workspaces are chained together through events. PR → code review workspace emits `review.completed` → deploy workspace is created automatically → after deployment emits `deploy.completed` → monitoring workspace watches metrics. Each step is a full workspace with humans and agents, without an external orchestrator.
 
-## 3. Верхнеуровневые паттерны
+## 3. High-Level Patterns
 
-Анализ существующих платформ (Devin, GitHub Copilot, Cursor, Factory, Replit) выявляет устойчивые архитектурные паттерны, которые Agent Relay кодифицирует в стандартный протокол:
+Analysis of existing platforms (Devin, GitHub Copilot, Cursor, Factory, Replit) reveals stable architectural patterns that Agent Relay codifies into a standard protocol:
 
-**Shared artifact, не только chat.** Успешные системы строят сотрудничество вокруг конкретного артефакта — PR, branch, checkpoint, context space — а не просто чата. Workspace в Agent Relay — это и chat room, и контролируемая среда с кодом, данными и tools, привязанная к конкретной задаче или артефакту.
+**Shared artifact, not just chat.** Successful systems build collaboration around a concrete artifact — a PR, branch, checkpoint, context space — not just a chat. A Workspace in Agent Relay is both a chat room and a controlled environment with code, data, and tools, tied to a specific task or artifact.
 
-**Async agent + human review/handoff.** Зрелые продукты ушли от модели "человек и агент одновременно редактируют" к модели "агент работает асинхронно, человек подключается для review, approval или takeover". Agent Relay поддерживает оба режима, но approval flow и notification channels оптимизированы именно для async-паттерна.
+**Async agent + human review/handoff.** Mature products have moved from the "human and agent simultaneously editing" model to "agent works asynchronously, human connects for review, approval, or takeover." Agent Relay supports both modes, but approval flow and notification channels are optimized specifically for the async pattern.
 
-**RBAC + runtime guardrails.** Безопасность не через prompting, а через реальные контроли: team roles, org policies, network restrictions, approval gates, sandboxes. В Agent Relay это Policy, Grant, Approval и MCP Gateway.
+**RBAC + runtime guardrails.** Security through real controls, not prompting: team roles, org policies, network restrictions, approval gates, sandboxes. In Agent Relay these are Policy, Grant, Approval, and MCP Gateway.
 
-**MCP как tool bus.** Все зрелые платформы используют MCP для подключения внешних tools. Agent Relay не изобретает свой tool protocol, а строит MCP Gateway как авторизационный и discovery слой поверх MCP.
+**MCP as tool bus.** All mature platforms use MCP for connecting external tools. Agent Relay does not invent its own tool protocol but builds MCP Gateway as an authorization and discovery layer on top of MCP.
 
-**Checkpoints и rollbacks.** Возможность откатить workspace к предыдущему состоянию — критически важна для безопасной работы с агентами. Agent Relay включает checkpoint/restore как часть lifecycle workspace.
+**Checkpoints and rollbacks.** The ability to roll back a workspace to a previous state is critically important for safe work with agents. Agent Relay includes checkpoint/restore as part of the workspace lifecycle.
 
-**От ad-hoc диалога к явному протоколу.** Каждая платформа реализует одни и те же паттерны несовместимо. Agent Relay кодифицирует эти паттерны в открытый стандарт, делая компоненты взаимозаменяемыми.
+**From ad-hoc dialogue to explicit protocol.** Every platform implements the same patterns incompatibly. Agent Relay codifies these patterns into an open standard, making components interchangeable.
 
-## 4. Обзор
+## 4. Overview
 
-### 4.1 Ключевые ресурсы
+### 4.1 Key Resources
 
-| Ресурс | Описание |
+| Resource | Description |
 |---|---|
-| **Namespace** | Изоляция и tenancy. Все ресурсы принадлежат namespace. Quotas, billing. |
-| **User** | Человек в системе. Identity, группы, membership в workspaces. |
-| **Workspace** | Рабочее пространство — chat room + environment. Люди и агенты работают вместе. |
-| **Agent** | Экземпляр агента в workspace. Ссылается на AgentHarness или описан inline. |
-| **AgentHarness** | Обвязка агента: provider, модель, skills, tools. Переиспользуется. |
-| **Skill** | Runtime-обвязка для Agent Skill: tools binding, suggested policies, risk tier. Content — Agent Skills spec (SKILL.md). |
-| **ToolProvider** | MCP server — источник tools. Регистрируется в MCP Gateway. |
-| **Policy** | Правило доступа к tools: кто, что, эффект (allow / deny / approval_required). |
-| **Grant** | Делегирование конкретного права: once, temporary, permanent. |
-| **Approval** | Запрос на разрешение tool call. Создаётся runtime, отвечает approver через JWT. |
-| **NotificationChannel** | Канал доставки событий: approvals, сообщения, изменения workspace. |
-| **EventProvider** | Источник внешних событий: GitHub webhooks, PagerDuty, cron. |
-| **Subscription** | На событие из EventProvider → создать workspace по шаблону. |
-| **WorkspaceTemplate** | Шаблон workspace для автоматического создания. |
-| **Checkpoint** | Снимок состояния workspace. Rollback, clone, восстановление. |
-| **CustomResourceDefinition** | Определение custom resource. Расширение спецификации без изменения core. |
-| **AuditEntry** | Запись в audit log: who, what, when, where, result. Immutable. |
+| **Namespace** | Isolation and tenancy. All resources belong to a namespace. Quotas, billing. |
+| **User** | A human in the system. Identity, groups, workspace membership. |
+| **Workspace** | Working space — chat room + environment. Humans and agents work together. |
+| **Agent** | An agent instance in a workspace. References an AgentHarness or is described inline. |
+| **AgentHarness** | Agent wrapper: provider, model, skills, tools. Reusable. |
+| **Skill** | Runtime wrapper for an Agent Skill: tools binding, suggested policies, risk tier. Content — Agent Skills spec (SKILL.md). |
+| **ToolProvider** | MCP server — source of tools. Registered in MCP Gateway. |
+| **Policy** | Access rule for tools: who, what, effect (allow / deny / approval_required). |
+| **Grant** | Delegation of a specific right: once, temporary, permanent. |
+| **Approval** | Request for permission to make a tool call. Created by runtime, answered by approver via JWT. |
+| **NotificationChannel** | Event delivery channel: approvals, messages, workspace changes. |
+| **EventProvider** | Source of external events: GitHub webhooks, PagerDuty, cron. |
+| **Subscription** | On event from EventProvider → create workspace from template. |
+| **WorkspaceTemplate** | Template for automatic workspace creation. |
+| **Checkpoint** | Snapshot of workspace state. Rollback, clone, restore. |
+| **CustomResourceDefinition** | Custom resource definition. Extends the specification without changing core. |
+| **AuditEntry** | Audit log entry: who, what, when, where, result. Immutable. |
 
-### 4.2 Архитектура
+### 4.2 Architecture
 
-Протокол разделён на два слоя:
+The protocol is split into two layers:
 
-- **Control plane (Agent Relay API)** — управление ресурсами: workspaces, agents, grants, policies. REST API в стиле Kubernetes.
-- **Data plane (ACP)** — взаимодействие внутри workspace: сообщения, tool calls, streaming. Workspace выставляет ACP endpoint.
+- **Control plane (Agent Relay API)** — resource management: workspaces, agents, grants, policies. Kubernetes-style REST API.
+- **Data plane (ACP)** — interaction within workspace: messages, tool calls, streaming. Workspace exposes an ACP endpoint.
 
-Relay отвечает за "что существует и кто имеет доступ". ACP отвечает за "что происходит внутри".
+Relay is responsible for "what exists and who has access." ACP is responsible for "what happens inside."
 
 ```mermaid
 flowchart TB
@@ -157,37 +157,37 @@ flowchart TB
     class MCP1,MCP2,REG,EP1,EP2 external;
 ```
 
-### 4.3 Ключевые компоненты
+### 4.3 Key Components
 
-- **Control Plane API** — REST API для управления ресурсами.
-- **Workspace Manager** — создание, запуск, остановка workspaces и environments. Выставляет ACP endpoint.
-- **Agent Manager** — lifecycle агентов: запуск, остановка, health check.
-- **MCP Gateway** — единая точка доступа к tools. Policy check, approval, secret injection, audit, rate limiting, proxying на MCP servers. Включает registry для discovery.
-- **Policy Engine** — вычисление эффективных permissions. Allow/deny/approval_required.
-- **Notification Service** — доставка событий и approval requests через webhook, email, ACP.
-- **Subscription Manager** — обработка внешних событий, создание workspaces по шаблонам.
-- **Audit Log** — immutable лог всех действий.
+- **Control Plane API** — REST API for resource management.
+- **Workspace Manager** — creation, launch, and shutdown of workspaces and environments. Exposes ACP endpoint.
+- **Agent Manager** — agent lifecycle: launch, stop, health check.
+- **MCP Gateway** — single point of access to tools. Policy check, approval, secret injection, audit, rate limiting, proxying to MCP servers. Includes a registry for discovery.
+- **Policy Engine** — computation of effective permissions. Allow/deny/approval_required.
+- **Notification Service** — delivery of events and approval requests via webhook, email, ACP.
+- **Subscription Manager** — processing of external events, workspace creation from templates.
+- **Audit Log** — immutable log of all actions.
 
 ### 4.4 Workspace
 
-Workspace — главное рабочее пространство. С одной стороны — chat room, в котором люди и агенты общаются. С другой — контролируемая среда с общим filesystem, tools, code и data.
+Workspace is the primary working space. On one hand — a chat room where humans and agents communicate. On the other — a controlled environment with shared filesystem, tools, code, and data.
 
-Environment — вложенная часть workspace: runtime backend (docker, k8s, local), filesystem, mounts, network policy, secrets. Environment имеет собственный lifecycle — можно перезапустить без пересоздания workspace.
+Environment is a nested part of workspace: runtime backend (docker, k8s, local), filesystem, mounts, network policy, secrets. Environment has its own lifecycle — it can be restarted without recreating the workspace.
 
-Workspace имеет стабильную identity, которая включает namespace. Формат: `workspace.namespace@host`. Например: `payments-debug.acme-corp@relay.example.com`. Identity уникальна глобально и используется для grants, audit trail, membership, ACP endpoint и внешних ссылок. ACP endpoint строится из identity: `acp://payments-debug.acme-corp@relay.example.com`.
+Workspace has a stable identity that includes the namespace. Format: `workspace.namespace@host`. For example: `payments-debug.acme-corp@relay.example.com`. The identity is globally unique and is used for grants, audit trail, membership, ACP endpoint, and external references. The ACP endpoint is derived from identity: `acp://payments-debug.acme-corp@relay.example.com`.
 
-Workspace может подписываться на внешние события через EventProvider. События приходят в workspace как сообщения в чат — агенты видят их и могут реагировать. Например, workspace подписан на GitHub push events: при новом коммите агент получает сообщение, запускает тесты и отписывает результат. Это позволяет workspace быть не только пассивным пространством, но и реактивной средой.
+Workspace can subscribe to external events via EventProvider. Events arrive in the workspace as chat messages — agents see them and can react. For example, a workspace is subscribed to GitHub push events: on a new commit, an agent receives a message, runs tests, and reports the result. This allows the workspace to be not just a passive space but a reactive environment.
 
-#### Workspace как event producer
+#### Workspace as Event Producer
 
-Workspace не только получает события, но и эмитит их. Исходящие события генерируются автоматически (lifecycle changes) и явно (агент или человек эмитит событие через API).
+Workspace not only receives events but also emits them. Outgoing events are generated automatically (lifecycle changes) and explicitly (an agent or human emits an event via API).
 
-Типы исходящих событий:
+Types of outgoing events:
 - **lifecycle** — `workspace.started`, `workspace.stopped`, `workspace.failed`, `workspace.completed`
 - **agent** — `agent.started`, `agent.stopped`, `agent.completed`
-- **custom** — произвольные события, эмитированные агентом: `review.done`, `tests.passed`, `deploy.ready`
+- **custom** — arbitrary events emitted by an agent: `review.done`, `tests.passed`, `deploy.ready`
 
-Completion event может нести payload — результат работы, артефакты, ссылки:
+A completion event can carry a payload — work result, artifacts, links:
 
 ```yaml
 kind: WorkspaceEvent
@@ -204,116 +204,116 @@ spec:
         url: /workspaces/pr-review-42/artifacts/review.md
 ```
 
-Исходящие события workspace доступны другим через тот же механизм EventProvider/Subscription. Это позволяет строить **цепочки workspaces** без внешнего оркестратора:
+Outgoing workspace events are available to others through the same EventProvider/Subscription mechanism. This allows building **workspace chains** without an external orchestrator:
 
 ```
 PR opened → [code-review workspace] → review.completed → [deploy workspace] → deploy.completed → [monitoring workspace]
 ```
 
-Каждый шаг — полноценный workspace с людьми, агентами и tools. Связка — через события.
+Each step is a full workspace with humans, agents, and tools. The connection is through events.
 
 #### History
 
-История сообщений workspace — это ACP-артефакт. Формат сообщений, streaming, context compaction — ответственность ACP и агента. Relay отвечает только за **persistence и доступ**: history хранится пока workspace существует (включая Stopped и Archived), удаляется вместе с workspace.
+Workspace message history is an ACP artifact. Message format, streaming, context compaction are the responsibility of ACP and the agent. Relay is responsible only for **persistence and access**: history is stored as long as the workspace exists (including Stopped and Archived states), and is deleted with the workspace.
 
-Relay предоставляет read-only API к истории для UI, поиска и экспорта.
+Relay provides a read-only API to history for UI, search, and export.
 
 #### Checkpoints & Snapshots
 
-Workspace поддерживает checkpoints — снимки состояния environment (filesystem, databases, conversation context). Checkpoints создаются автоматически (перед опасными операциями, по расписанию) или вручную.
+Workspace supports checkpoints — snapshots of environment state (filesystem, databases, conversation context). Checkpoints are created automatically (before dangerous operations, on schedule) or manually.
 
-Операции:
-- **Checkpoint** — создать снимок текущего состояния workspace.
-- **Rollback** — откатить workspace к предыдущему checkpoint.
-- **Clone** — создать новый workspace из checkpoint существующего. Полезно для параллельных экспериментов, debugging или передачи контекста другой команде.
+Operations:
+- **Checkpoint** — create a snapshot of the current workspace state.
+- **Rollback** — revert workspace to a previous checkpoint.
+- **Clone** — create a new workspace from an existing checkpoint. Useful for parallel experiments, debugging, or handing off context to another team.
 
-Правила по умолчанию:
-- Один environment на workspace.
-- Участники видят одну filesystem view.
-- Доступ к tools явный и revocable.
-- Права workspace-scoped, не глобальные.
+Default rules:
+- One environment per workspace.
+- Participants see a single filesystem view.
+- Tool access is explicit and revocable.
+- Permissions are workspace-scoped, not global.
 
 ### 4.5 MCP Gateway
 
-Агент никогда не вызывает MCP server напрямую. Все tool calls проходят через MCP Gateway:
+An agent never calls an MCP server directly. All tool calls go through MCP Gateway:
 
 ```
 Agent → ACP → MCP Gateway → MCP Server / HTTP API / builtin
 ```
 
-На каждый tool call gateway выполняет:
-1. **Policy check** — проверяет permissions.
-2. **Approval** — если нужно, создаёт Approval и ждёт ответа.
-3. **Secret injection** — подставляет credentials. Агент не видит токены.
-4. **Audit** — логирует вызов, параметры, результат.
-5. **Rate limiting** — ограничивает частоту.
-6. **Proxying** — проксирует на backend.
+For each tool call, the gateway performs:
+1. **Policy check** — verifies permissions.
+2. **Approval** — if required, creates an Approval and waits for a response.
+3. **Secret injection** — injects credentials. The agent never sees tokens.
+4. **Audit** — logs the call, parameters, and result.
+5. **Rate limiting** — throttles request frequency.
+6. **Proxying** — proxies to the backend.
 
-Gateway также отвечает за **discovery**: каталог MCP servers, поиск tools по имени, тегам, capabilities.
+The gateway is also responsible for **discovery**: catalog of MCP servers, tool search by name, tags, and capabilities.
 
 ### 4.6 Skills
 
-Skill — runtime-обвязка для Agent Skills. Формат skill content (SKILL.md, instructions, scripts, references) определяется [Agent Skills spec](https://agentskills.io) — открытым стандартом от Anthropic, принятым Microsoft, OpenAI, Cursor, GitHub и другими. Agent Relay не изобретает свой формат instructions, а добавляет то, чего нет в Agent Skills: **tools binding, permissions и runtime policy**.
+Skill is a runtime wrapper for Agent Skills. The skill content format (SKILL.md, instructions, scripts, references) is defined by the [Agent Skills spec](https://agentskills.io) — an open standard from Anthropic, adopted by Microsoft, OpenAI, Cursor, GitHub, and others. Agent Relay does not invent its own instruction format but adds what Agent Skills lacks: **tools binding, permissions, and runtime policy**.
 
-Skill в Agent Relay связывает:
-- **Content** — ссылка на Agent Skills пакет (SKILL.md) или inline.
-- **Tools** — какие tools нужны skill для работы.
-- **Policies** — suggested permissions и risk tier.
+A Skill in Agent Relay connects:
+- **Content** — reference to an Agent Skills package (SKILL.md) or inline.
+- **Tools** — which tools the skill needs to operate.
+- **Policies** — suggested permissions and risk tier.
 
-AgentHarness ссылается на skills по имени. При активации агент получает SKILL.md content через progressive disclosure (Agent Skills spec), а Relay автоматически подключает нужные tools и применяет suggested policies.
+AgentHarness references skills by name. Upon activation, the agent receives SKILL.md content through progressive disclosure (Agent Skills spec), and Relay automatically connects the required tools and applies suggested policies.
 
 ### 4.7 Permissions & Approvals
 
-Доступ к tools контролируется через **Policy** — кто (subject), к чему (tools), с каким эффектом (allow, deny, approval_required).
+Tool access is controlled through **Policy** — who (subject), to what (tools), with what effect (allow, deny, approval_required).
 
-#### Risk tiers
+#### Risk Tiers
 
-Tools классифицируются по уровню риска. Policy может ссылаться на risk tier вместо перечисления отдельных tools:
+Tools are classified by risk level. A Policy can reference a risk tier instead of listing individual tools:
 
-- **low** — read-only операции, поиск, чтение файлов. Default: `allow`.
-- **medium** — запись файлов, создание PR, отправка сообщений. Default: `approval_required`.
-- **high** — shell execution, deploy, удаление данных, network access. Default: `deny`.
+- **low** — read-only operations, search, file reading. Default: `allow`.
+- **medium** — file writing, PR creation, sending messages. Default: `approval_required`.
+- **high** — shell execution, deploy, data deletion, network access. Default: `deny`.
 
-Risk tier задаётся при регистрации tool в ToolProvider. Policy может override default для любого tier. Это позволяет не писать policy на каждый tool, а задать разумные defaults по классу риска.
+The risk tier is set when registering a tool in ToolProvider. A Policy can override the default for any tier. This avoids writing a policy for every tool, instead setting reasonable defaults by risk class.
 
-#### Policy hierarchy
+#### Policy Hierarchy
 
-Policies наследуются сверху вниз: **namespace → workspace**. Нижний уровень может только **ужесточать** политику верхнего, но не ослаблять. Namespace admin задаёт baseline — workspace owner может добавить ограничения, но не снять существующие.
+Policies are inherited top-down: **namespace → workspace**. A lower level can only **tighten** the upper level's policy, not loosen it. The namespace admin sets the baseline — a workspace owner can add restrictions but cannot remove existing ones.
 
-Например, если namespace policy запрещает `shell.execute` для агентов — workspace policy не может разрешить это. Но workspace может дополнительно запретить `fs.write`, даже если namespace его разрешает.
+For example, if a namespace policy denies `shell.execute` for agents — a workspace policy cannot allow it. But a workspace can additionally deny `fs.write`, even if the namespace allows it.
 
-#### Approval flow
+#### Approval Flow
 
-1. Агент вызывает tool → policy требует approval → runtime создаёт Approval (Pending).
-2. Runtime генерирует JWT token и доставляет notification через NotificationChannel (Slack, email, ACP).
-3. Approver видит запрос с полным контекстом, отвечает через REST с JWT: `PUT /approvals/{id}?token={jwt}&decision=approve`.
-4. Runtime верифицирует JWT, возобновляет tool call.
+1. Agent calls a tool → policy requires approval → runtime creates an Approval (Pending).
+2. Runtime generates a JWT token and delivers a notification via NotificationChannel (Slack, email, ACP).
+3. Approver sees the request with full context, responds via REST with JWT: `PUT /approvals/{id}?token={jwt}&decision=approve`.
+4. Runtime verifies JWT, resumes the tool call.
 
-JWT одноразовый, подписан ключом runtime. Approval имеет TTL — при timeout default deny или escalation.
+JWT is single-use, signed with the runtime's key. Approval has a TTL — on timeout, the default is deny or escalation.
 
-**Grant** — делегирование прав с режимами: `once` (одноразовый), `temporary` (с expiration), `permanent`.
+**Grant** — rights delegation with modes: `once` (single-use), `temporary` (with expiration), `permanent`.
 
 ### 4.8 Events & Subscriptions
 
-Workspaces создаются автоматически на внешние события:
+Workspaces are created automatically on external events:
 
-- **EventProvider** — источник событий (GitHub webhooks, PagerDuty, cron). Runtime выставляет endpoint для каждого provider.
-- **WorkspaceTemplate** — шаблон workspace с environment, agents, members, policies.
-- **Subscription** — связка: событие + фильтр → создать workspace по шаблону.
+- **EventProvider** — event source (GitHub webhooks, PagerDuty, cron). Runtime exposes an endpoint for each provider.
+- **WorkspaceTemplate** — workspace template with environment, agents, members, policies.
+- **Subscription** — binding: event + filter → create workspace from template.
 
-Два режима: создать новый workspace (Subscription) или доставить событие в уже живой workspace (event routing).
+Two modes: create a new workspace (Subscription) or deliver an event to an already running workspace (event routing).
 
 ### 4.9 Notifications
 
-NotificationChannel доставляет события workspace до пользователей вне ACP-подключения: approval requests, сообщения от агентов, изменения workspace, agent status. Типы каналов: webhook, email, ACP event.
+NotificationChannel delivers workspace events to users outside an ACP connection: approval requests, agent messages, workspace changes, agent status. Channel types: webhook, email, ACP event.
 
 ### 4.10 Authentication
 
-Runtime не реализует OAuth/OIDC login flow — только валидирует токены от внешнего OIDC provider. Аналогично Kubernetes.
+The runtime does not implement OAuth/OIDC login flow — it only validates tokens from an external OIDC provider. Analogous to Kubernetes.
 
-**Люди** аутентифицируются через OIDC. Клиент (IDE, Web UI, CLI) получает JWT от OIDC provider (Keycloak, Google, Azure AD и т.д.) и передаёт в `Authorization: Bearer {token}`. Runtime валидирует подпись и извлекает identity из claims (email, sub, groups).
+**Humans** authenticate via OIDC. The client (IDE, Web UI, CLI) obtains a JWT from an OIDC provider (Keycloak, Google, Azure AD, etc.) and passes it in `Authorization: Bearer {token}`. The runtime validates the signature and extracts identity from claims (email, sub, groups).
 
-**Агенты** получают ServiceAccount tokens — JWT, выпущенные самим runtime. Token scoped к конкретному workspace и имеет ограниченные permissions. Агент не проходит OAuth flow — runtime генерирует token при запуске агента.
+**Agents** receive ServiceAccount tokens — JWTs issued by the runtime itself. The token is scoped to a specific workspace and has limited permissions. The agent does not go through an OAuth flow — the runtime generates the token when launching the agent.
 
 **Runtime config:**
 
@@ -331,13 +331,13 @@ spec:
       signingKey: runtime-key
 ```
 
-Все запросы к API и ACP должны содержать валидный token. `GET /apis/relay/v1/whoami` возвращает текущий subject и его эффективные права.
+All API and ACP requests must contain a valid token. `GET /apis/relay/v1/whoami` returns the current subject and their effective permissions.
 
 ### 4.11 Custom Resources
 
-Спецификация определяет core resources (Workspace, Agent, Policy и т.д.), но runtime открыт для расширения. Любой может определить свои ресурсы через `CustomResourceDefinition` — аналогично CRD в Kubernetes.
+The specification defines core resources (Workspace, Agent, Policy, etc.), but the runtime is open for extension. Anyone can define their own resources through `CustomResourceDefinition` — analogous to CRDs in Kubernetes.
 
-Custom resource получает полный API автоматически: CRUD, watch, валидация по schema. Может быть глобальным или workspace-scoped. Core механизмы (audit, RBAC, watch) работают с custom resources так же, как с core.
+A custom resource automatically gets a full API: CRUD, watch, schema validation. It can be global or workspace-scoped. Core mechanisms (audit, RBAC, watch) work with custom resources the same way as with core resources.
 
 ```yaml
 kind: CustomResourceDefinition
@@ -358,7 +358,7 @@ spec:
         ci: { type: string }
 ```
 
-После регистрации CRD можно создавать ресурсы:
+After registering a CRD, you can create resources:
 
 ```yaml
 kind: Project
@@ -373,7 +373,7 @@ spec:
 
 API: `/apis/example.com/v1/workspaces/{name}/projects/{project}`
 
-Custom resources глубоко интегрированы с системой permissions. Policy может ссылаться на custom resources так же, как на tools — можно контролировать кто имеет право создавать, читать, обновлять и удалять конкретные custom resources:
+Custom resources are deeply integrated with the permissions system. A Policy can reference custom resources just like tools — you can control who has the right to create, read, update, and delete specific custom resources:
 
 ```yaml
 kind: Policy
@@ -389,17 +389,17 @@ spec:
       effect: allow
 ```
 
-Это позволяет строить domain-specific расширения (Project, Task, Pipeline, Deployment) без изменения core спецификации. Каждое расширение автоматически получает CRUD API, watch, audit, и полный RBAC.
+This allows building domain-specific extensions (Project, Task, Pipeline, Deployment) without changing the core specification. Each extension automatically gets a CRUD API, watch, audit, and full RBAC.
 
 ### 4.12 Namespaces
 
-Namespace — уровень изоляции и tenancy. Аналогично Kubernetes namespaces. Все ресурсы (workspaces, agents, policies, grants, templates и т.д.) принадлежат namespace.
+Namespace is the isolation and tenancy level. Analogous to Kubernetes namespaces. All resources (workspaces, agents, policies, grants, templates, etc.) belong to a namespace.
 
-Namespace обеспечивает:
-- **Изоляция** — ресурсы одного namespace не видны из другого.
-- **RBAC** — права можно выдавать на уровне namespace (например, admin всего namespace).
-- **Quotas** — лимиты на ресурсы per namespace (workspaces, agents, storage).
-- **Billing** — namespace = единица тарификации.
+Namespace provides:
+- **Isolation** — resources of one namespace are not visible from another.
+- **RBAC** — permissions can be granted at the namespace level (e.g., admin of the entire namespace).
+- **Quotas** — resource limits per namespace (workspaces, agents, storage).
+- **Billing** — namespace = billing unit.
 
 ```yaml
 kind: Namespace
@@ -416,51 +416,51 @@ spec:
 
 API prefix: `/apis/relay/v1/namespaces/{ns}/workspaces/...`
 
-Для простых инсталляций можно использовать один namespace `default` — система работает как сейчас, без лишней сложности.
+For simple installations, a single `default` namespace can be used — the system works as-is without extra complexity.
 
 ```
-POST   /apis/relay/v1/namespaces                   — создать namespace
-GET    /apis/relay/v1/namespaces                   — список namespaces
-GET    /apis/relay/v1/namespaces/{ns}              — получить namespace
-PUT    /apis/relay/v1/namespaces/{ns}              — обновить namespace
-DELETE /apis/relay/v1/namespaces/{ns}              — удалить namespace
+POST   /apis/relay/v1/namespaces                   — create namespace
+GET    /apis/relay/v1/namespaces                   — list namespaces
+GET    /apis/relay/v1/namespaces/{ns}              — get namespace
+PUT    /apis/relay/v1/namespaces/{ns}              — update namespace
+DELETE /apis/relay/v1/namespaces/{ns}              — delete namespace
 ```
 
 ### 4.13 Audit
 
-Все действия логируются: tool calls, permission changes, member changes, agent lifecycle. Audit log immutable и queryable. Каждая запись: who, what, when, where, result, context.
+All actions are logged: tool calls, permission changes, member changes, agent lifecycle. The audit log is immutable and queryable. Each entry: who, what, when, where, result, context.
 
 ### 4.14 Security Model
 
-Безопасность Agent Relay строится на **deterministic controls**, а не на prompt steering. LLM рассматривается как powerful but untrusted component — безопасность обеспечивается архитектурой, а не инструкциями агенту.
+Agent Relay security is built on **deterministic controls**, not prompt steering. The LLM is treated as a powerful but untrusted component — security is ensured by architecture, not by instructions to the agent.
 
-#### Принципы
+#### Principles
 
-- **Default deny** — агент не имеет доступа к tools пока не выдан явный grant или policy.
-- **Deterministic enforcement** — все проверки выполняются MCP Gateway и Policy Engine, а не LLM.
-- **Least privilege** — агент получает минимальные права, необходимые для задачи. ServiceAccount token scoped к workspace.
-- **Policy hierarchy** — namespace policy не может быть ослаблена workspace policy.
-- **Audit everything** — все tool calls, approvals, permission changes логируются immutably.
+- **Default deny** — an agent has no access to tools until an explicit grant or policy is issued.
+- **Deterministic enforcement** — all checks are performed by MCP Gateway and Policy Engine, not the LLM.
+- **Least privilege** — the agent receives the minimum permissions needed for the task. ServiceAccount token is scoped to the workspace.
+- **Policy hierarchy** — namespace policy cannot be loosened by workspace policy.
+- **Audit everything** — all tool calls, approvals, and permission changes are logged immutably.
 
-#### Threat model
+#### Threat Model
 
-**1. Prompt injection через shared context.**
-Агент читает данные из workspace (файлы, сообщения, events) — malicious content может содержать инструкции. Защита: MCP Gateway проверяет permissions на каждый tool call независимо от того, что "попросил" агент. Policy Engine не доверяет intent агента, а проверяет action.
+**1. Prompt injection via shared context.**
+The agent reads data from the workspace (files, messages, events) — malicious content can contain instructions. Defense: MCP Gateway checks permissions on every tool call regardless of what the agent "asked for." Policy Engine does not trust agent intent; it checks the action.
 
 **2. Data exfiltration.**
-Агент может попытаться отправить данные наружу через tool calls (HTTP запросы, shell commands, MCP servers). Защита: network policy на уровне environment (egress allowlist, default-deny), risk tier `high` для network-accessing tools, audit log для обнаружения.
+The agent may attempt to send data out through tool calls (HTTP requests, shell commands, MCP servers). Defense: network policy at the environment level (egress allowlist, default-deny), risk tier `high` for network-accessing tools, audit log for detection.
 
 **3. Tool abuse / destructive execution.**
-Агент может выполнить деструктивные операции: удаление файлов, drop database, force push. Защита: risk tiers (high-risk tools требуют approval или denied by default), checkpoints для rollback, approval flow для опасных операций.
+The agent may perform destructive operations: file deletion, drop database, force push. Defense: risk tiers (high-risk tools require approval or are denied by default), checkpoints for rollback, approval flow for dangerous operations.
 
 **4. Privilege escalation.**
-Агент может попытаться получить права выше выданных: через другого агента, через tool который даёт доступ к secrets, через workspace event manipulation. Защита: каждый агент имеет изолированный ServiceAccount token, secrets не доступны агентам напрямую (secret injection через gateway), policy hierarchy предотвращает ослабление.
+The agent may attempt to gain higher privileges than granted: through another agent, through a tool that provides access to secrets, through workspace event manipulation. Defense: each agent has an isolated ServiceAccount token, secrets are not directly accessible to agents (secret injection via gateway), policy hierarchy prevents loosening.
 
 ---
 
-## 5. Ресурсы
+## 5. Resources
 
-API построен в стиле Kubernetes: декларативные ресурсы с `kind`, `metadata`, `spec`, `status`. Стандартные HTTP методы для CRUD. Watch через SSE.
+The API is built in Kubernetes style: declarative resources with `kind`, `metadata`, `spec`, `status`. Standard HTTP methods for CRUD. Watch via SSE.
 
 ```
 GET    /apis/relay/v1/{resources}              — list
@@ -486,12 +486,12 @@ spec:
 ```
 
 ```
-POST   /apis/relay/v1/users                     — создать user
-GET    /apis/relay/v1/users                     — список users
-GET    /apis/relay/v1/users/{name}              — получить user
-PUT    /apis/relay/v1/users/{name}              — обновить user
-DELETE /apis/relay/v1/users/{name}              — удалить user
-GET    /apis/relay/v1/users/{name}/workspaces   — workspaces пользователя
+POST   /apis/relay/v1/users                     — create user
+GET    /apis/relay/v1/users                     — list users
+GET    /apis/relay/v1/users/{name}              — get user
+PUT    /apis/relay/v1/users/{name}              — update user
+DELETE /apis/relay/v1/users/{name}              — delete user
+GET    /apis/relay/v1/users/{name}/workspaces   — user's workspaces
 ```
 
 ### 5.2 Workspace
@@ -521,37 +521,37 @@ status:
 ```
 
 ```
-POST   /apis/relay/v1/workspaces                           — создать workspace
-GET    /apis/relay/v1/workspaces                           — список workspaces
-GET    /apis/relay/v1/workspaces/{name}                    — получить workspace
-PUT    /apis/relay/v1/workspaces/{name}                    — обновить workspace
-DELETE /apis/relay/v1/workspaces/{name}                    — удалить workspace
-GET    /apis/relay/v1/workspaces/{name}/status             — статус workspace
-PUT    /apis/relay/v1/workspaces/{name}/environment/start  — запустить environment
-PUT    /apis/relay/v1/workspaces/{name}/environment/stop   — остановить environment
-GET    /apis/relay/v1/workspaces?watch=true                — watch изменений
+POST   /apis/relay/v1/workspaces                           — create workspace
+GET    /apis/relay/v1/workspaces                           — list workspaces
+GET    /apis/relay/v1/workspaces/{name}                    — get workspace
+PUT    /apis/relay/v1/workspaces/{name}                    — update workspace
+DELETE /apis/relay/v1/workspaces/{name}                    — delete workspace
+GET    /apis/relay/v1/workspaces/{name}/status             — workspace status
+PUT    /apis/relay/v1/workspaces/{name}/environment/start  — start environment
+PUT    /apis/relay/v1/workspaces/{name}/environment/stop   — stop environment
+GET    /apis/relay/v1/workspaces?watch=true                — watch changes
 ```
 
 #### History
 
-Read-only API к ACP-истории workspace.
+Read-only API to workspace ACP history.
 
 ```
-GET    /apis/relay/v1/workspaces/{name}/messages                — история сообщений
-GET    /apis/relay/v1/workspaces/{name}/messages?author={a}&type={t}&from={ts}&to={ts}&q={search} — фильтрация и поиск
+GET    /apis/relay/v1/workspaces/{name}/messages                — message history
+GET    /apis/relay/v1/workspaces/{name}/messages?author={a}&type={t}&from={ts}&to={ts}&q={search} — filter and search
 ```
 
 #### Events (outgoing)
 
-Workspace эмитит события — lifecycle и custom. Агенты и внешние системы могут подписываться на них.
+Workspace emits events — lifecycle and custom. Agents and external systems can subscribe to them.
 
 ```
-POST   /apis/relay/v1/workspaces/{name}/events               — эмитировать событие
-GET    /apis/relay/v1/workspaces/{name}/events               — список событий
-GET    /apis/relay/v1/workspaces/{name}/events?watch=true    — подписка на события (SSE)
+POST   /apis/relay/v1/workspaces/{name}/events               — emit event
+GET    /apis/relay/v1/workspaces/{name}/events               — list events
+GET    /apis/relay/v1/workspaces/{name}/events?watch=true    — subscribe to events (SSE)
 ```
 
-Workspace как EventProvider для других subscriptions:
+Workspace as EventProvider for other subscriptions:
 
 ```yaml
 kind: Subscription
@@ -582,22 +582,22 @@ status:
 ```
 
 ```
-POST   /apis/relay/v1/workspaces/{name}/checkpoints              — создать checkpoint
-GET    /apis/relay/v1/workspaces/{name}/checkpoints              — список checkpoints
-GET    /apis/relay/v1/workspaces/{name}/checkpoints/{cp}         — получить checkpoint
-DELETE /apis/relay/v1/workspaces/{name}/checkpoints/{cp}         — удалить checkpoint
-POST   /apis/relay/v1/workspaces/{name}/checkpoints/{cp}/rollback — откатить к checkpoint
-POST   /apis/relay/v1/workspaces/{name}/checkpoints/{cp}/clone    — создать новый workspace из checkpoint
+POST   /apis/relay/v1/workspaces/{name}/checkpoints              — create checkpoint
+GET    /apis/relay/v1/workspaces/{name}/checkpoints              — list checkpoints
+GET    /apis/relay/v1/workspaces/{name}/checkpoints/{cp}         — get checkpoint
+DELETE /apis/relay/v1/workspaces/{name}/checkpoints/{cp}         — delete checkpoint
+POST   /apis/relay/v1/workspaces/{name}/checkpoints/{cp}/rollback — rollback to checkpoint
+POST   /apis/relay/v1/workspaces/{name}/checkpoints/{cp}/clone    — create new workspace from checkpoint
 ```
 
 #### Event Subscriptions
 
-Подписка workspace на события из EventProvider. События доставляются как сообщения в workspace.
+Workspace subscription to events from EventProvider. Events are delivered as messages into the workspace.
 
 ```
-POST   /apis/relay/v1/workspaces/{name}/eventsubscriptions              — подписаться на события
-GET    /apis/relay/v1/workspaces/{name}/eventsubscriptions              — список подписок
-DELETE /apis/relay/v1/workspaces/{name}/eventsubscriptions/{sub}        — отписаться
+POST   /apis/relay/v1/workspaces/{name}/eventsubscriptions              — subscribe to events
+GET    /apis/relay/v1/workspaces/{name}/eventsubscriptions              — list subscriptions
+DELETE /apis/relay/v1/workspaces/{name}/eventsubscriptions/{sub}        — unsubscribe
 ```
 
 ```yaml
@@ -623,18 +623,18 @@ spec:
 ```
 
 ```
-POST   /apis/relay/v1/workspaces/{name}/members              — добавить участника
-GET    /apis/relay/v1/workspaces/{name}/members              — список участников
-DELETE /apis/relay/v1/workspaces/{name}/members/{subject}    — убрать участника
+POST   /apis/relay/v1/workspaces/{name}/members              — add member
+GET    /apis/relay/v1/workspaces/{name}/members              — list members
+DELETE /apis/relay/v1/workspaces/{name}/members/{subject}    — remove member
 ```
 
-Роли: `owner`, `member`, `viewer`, `approver`. Доступ через direct assignment или group.
+Roles: `owner`, `member`, `viewer`, `approver`. Access via direct assignment or group.
 
 ### 5.3 Agents
 
 #### AgentHarness
 
-Переиспользуемый шаблон агента.
+A reusable agent template.
 
 ```yaml
 kind: AgentHarness
@@ -653,11 +653,11 @@ spec:
   maxTokens: 16000
 ```
 
-Skills приносят instructions (SKILL.md content) и suggested tools/policies. Harness может добавить дополнительные tools поверх тех, что требуют skills.
+Skills bring instructions (SKILL.md content) and suggested tools/policies. A harness can add additional tools on top of those required by skills.
 
 #### Agent
 
-Экземпляр агента в workspace. Ссылается на AgentHarness или описан inline.
+An agent instance in a workspace. References an AgentHarness or is described inline.
 
 ```yaml
 kind: Agent
@@ -670,7 +670,7 @@ status:
   phase: Running
 ```
 
-Inline вариант (без отдельного AgentHarness):
+Inline variant (without a separate AgentHarness):
 
 ```yaml
 kind: Agent
@@ -686,22 +686,22 @@ status:
 ```
 
 ```
-POST   /apis/relay/v1/workspaces/{name}/agents               — добавить агента
-GET    /apis/relay/v1/workspaces/{name}/agents               — список агентов
-GET    /apis/relay/v1/workspaces/{name}/agents/{agent}       — получить агента
-DELETE /apis/relay/v1/workspaces/{name}/agents/{agent}       — убрать агента
-PUT    /apis/relay/v1/workspaces/{name}/agents/{agent}/start — запустить агента
-PUT    /apis/relay/v1/workspaces/{name}/agents/{agent}/stop  — остановить агента
+POST   /apis/relay/v1/workspaces/{name}/agents               — add agent
+GET    /apis/relay/v1/workspaces/{name}/agents               — list agents
+GET    /apis/relay/v1/workspaces/{name}/agents/{agent}       — get agent
+DELETE /apis/relay/v1/workspaces/{name}/agents/{agent}       — remove agent
+PUT    /apis/relay/v1/workspaces/{name}/agents/{agent}/start — start agent
+PUT    /apis/relay/v1/workspaces/{name}/agents/{agent}/stop  — stop agent
 ```
 
 AgentHarness API:
 
 ```
-POST   /apis/relay/v1/agentharnesses                           — создать harness
-GET    /apis/relay/v1/agentharnesses                           — список harnesses
-GET    /apis/relay/v1/agentharnesses/{name}                    — получить harness
-PUT    /apis/relay/v1/agentharnesses/{name}                    — обновить harness
-DELETE /apis/relay/v1/agentharnesses/{name}                    — удалить harness
+POST   /apis/relay/v1/agentharnesses                           — create harness
+GET    /apis/relay/v1/agentharnesses                           — list harnesses
+GET    /apis/relay/v1/agentharnesses/{name}                    — get harness
+PUT    /apis/relay/v1/agentharnesses/{name}                    — update harness
+DELETE /apis/relay/v1/agentharnesses/{name}                    — delete harness
 ```
 
 ### 5.4 Skills
@@ -711,7 +711,7 @@ kind: Skill
 metadata:
   name: code-review
 spec:
-  source: github://org/skills/code-review    # Agent Skills пакет (SKILL.md)
+  source: github://org/skills/code-review    # Agent Skills package (SKILL.md)
   tools:
     - fs.read
     - github.pr.comment
@@ -724,7 +724,7 @@ spec:
   suggestedRisk: low
 ```
 
-Inline skill (без внешнего пакета):
+Inline skill (without an external package):
 
 ```yaml
 kind: Skill
@@ -747,18 +747,18 @@ spec:
 ```
 
 ```
-POST   /apis/relay/v1/skills                           — создать skill
-GET    /apis/relay/v1/skills                           — список skills
-GET    /apis/relay/v1/skills/{name}                    — получить skill
-PUT    /apis/relay/v1/skills/{name}                    — обновить skill
-DELETE /apis/relay/v1/skills/{name}                    — удалить skill
+POST   /apis/relay/v1/skills                           — create skill
+GET    /apis/relay/v1/skills                           — list skills
+GET    /apis/relay/v1/skills/{name}                    — get skill
+PUT    /apis/relay/v1/skills/{name}                    — update skill
+DELETE /apis/relay/v1/skills/{name}                    — delete skill
 ```
 
 ### 5.5 Tools & MCP Gateway
 
 #### ToolProvider
 
-MCP server — источник tools.
+MCP server — source of tools.
 
 ```yaml
 kind: ToolProvider
@@ -800,20 +800,20 @@ spec:
 #### Gateway API
 
 ```
-POST   /apis/relay/v1/gateway/servers                        — зарегистрировать MCP server
-GET    /apis/relay/v1/gateway/servers                        — список MCP servers
-GET    /apis/relay/v1/gateway/servers/{name}                 — получить MCP server
-DELETE /apis/relay/v1/gateway/servers/{name}                 — удалить MCP server
-GET    /apis/relay/v1/gateway/tools?q={query}                — поиск tools
+POST   /apis/relay/v1/gateway/servers                        — register MCP server
+GET    /apis/relay/v1/gateway/servers                        — list MCP servers
+GET    /apis/relay/v1/gateway/servers/{name}                 — get MCP server
+DELETE /apis/relay/v1/gateway/servers/{name}                 — delete MCP server
+GET    /apis/relay/v1/gateway/tools?q={query}                — search tools
 ```
 
-Подключение к workspace:
+Connecting to a workspace:
 
 ```
-POST   /apis/relay/v1/workspaces/{name}/servers              — подключить MCP server
-GET    /apis/relay/v1/workspaces/{name}/servers              — список подключённых
-DELETE /apis/relay/v1/workspaces/{name}/servers/{server}     — отключить MCP server
-GET    /apis/relay/v1/workspaces/{name}/tools                — все tools workspace
+POST   /apis/relay/v1/workspaces/{name}/servers              — connect MCP server
+GET    /apis/relay/v1/workspaces/{name}/servers              — list connected servers
+DELETE /apis/relay/v1/workspaces/{name}/servers/{server}     — disconnect MCP server
+GET    /apis/relay/v1/workspaces/{name}/tools                — all workspace tools
 ```
 
 ### 5.6 Permissions
@@ -843,7 +843,7 @@ spec:
   effect: allow
 ```
 
-Risk tier policy — defaults для всех tools по классу риска:
+Risk tier policy — defaults for all tools by risk class:
 
 ```yaml
 kind: Policy
@@ -875,19 +875,19 @@ spec:
   effect: deny
 ```
 
-Namespace-level policies наследуются всеми workspaces и не могут быть ослаблены:
+Namespace-level policies are inherited by all workspaces and cannot be loosened:
 
 ```
 POST   /apis/relay/v1/namespaces/{ns}/policies             — namespace policy
-GET    /apis/relay/v1/namespaces/{ns}/policies             — список namespace policies
+GET    /apis/relay/v1/namespaces/{ns}/policies             — list namespace policies
 ```
 
 ```
-POST   /apis/relay/v1/workspaces/{name}/policies             — создать policy
-GET    /apis/relay/v1/workspaces/{name}/policies             — список policies
-GET    /apis/relay/v1/workspaces/{name}/policies/{policy}    — получить policy
-PUT    /apis/relay/v1/workspaces/{name}/policies/{policy}    — обновить policy
-DELETE /apis/relay/v1/workspaces/{name}/policies/{policy}    — удалить policy
+POST   /apis/relay/v1/workspaces/{name}/policies             — create policy
+GET    /apis/relay/v1/workspaces/{name}/policies             — list policies
+GET    /apis/relay/v1/workspaces/{name}/policies/{policy}    — get policy
+PUT    /apis/relay/v1/workspaces/{name}/policies/{policy}    — update policy
+DELETE /apis/relay/v1/workspaces/{name}/policies/{policy}    — delete policy
 ```
 
 #### Grant
@@ -905,10 +905,10 @@ spec:
 ```
 
 ```
-POST   /apis/relay/v1/workspaces/{name}/grants             — создать grant
-GET    /apis/relay/v1/workspaces/{name}/grants             — список grants
-DELETE /apis/relay/v1/workspaces/{name}/grants/{grant}     — отозвать grant
-GET    /apis/relay/v1/workspaces/{name}/grants/effective?subject={subject} — эффективные права
+POST   /apis/relay/v1/workspaces/{name}/grants             — create grant
+GET    /apis/relay/v1/workspaces/{name}/grants             — list grants
+DELETE /apis/relay/v1/workspaces/{name}/grants/{grant}     — revoke grant
+GET    /apis/relay/v1/workspaces/{name}/grants/effective?subject={subject} — effective permissions
 ```
 
 #### Approval
@@ -933,22 +933,22 @@ status:
 ```
 
 ```
-GET    /apis/relay/v1/workspaces/{name}/approvals            — список pending approvals
-GET    /apis/relay/v1/workspaces/{name}/approvals/{id}       — получить approval
-PUT    /apis/relay/v1/workspaces/{name}/approvals/{id}       — ответить (approve/deny)
+GET    /apis/relay/v1/workspaces/{name}/approvals            — list pending approvals
+GET    /apis/relay/v1/workspaces/{name}/approvals/{id}       — get approval
+PUT    /apis/relay/v1/workspaces/{name}/approvals/{id}       — respond (approve/deny)
 ```
 
-#### Approval flow: пример
+#### Approval Flow: Example
 
-Агент `claude` хочет выполнить `shell.execute("npm run migration")`. Policy требует approval от `role:owner`.
+Agent `claude` wants to execute `shell.execute("npm run migration")`. Policy requires approval from `role:owner`.
 
-1. Агент вызывает tool → MCP Gateway проверяет policies → match: `approval_required`.
-2. Runtime создаёт Approval (Pending), генерирует JWT для каждого approver.
-3. Notification через каналы: ACP event, Slack webhook, email со ссылкой.
-4. Alice видит: "Agent claude wants to run `npm run migration`. Approve?"
-5. Alice отвечает → `PUT /approvals/approval-123?token=eyJ...&decision=approve`.
-6. Runtime верифицирует JWT, approval → Approved, tool call возобновляется.
-7. Всё записывается в audit log.
+1. Agent calls tool → MCP Gateway checks policies → match: `approval_required`.
+2. Runtime creates Approval (Pending), generates JWT for each approver.
+3. Notification through channels: ACP event, Slack webhook, email with link.
+4. Alice sees: "Agent claude wants to run `npm run migration`. Approve?"
+5. Alice responds → `PUT /approvals/approval-123?token=eyJ...&decision=approve`.
+6. Runtime verifies JWT, approval → Approved, tool call resumes.
+7. Everything is recorded in the audit log.
 
 ### 5.7 Notifications
 
@@ -977,7 +977,7 @@ spec:
     templateUrl: https://relay.example.com/workspace/{workspace}/messages
 ```
 
-Типы событий: `approval.requested`, `message.created`, `agent.status_changed`, `workspace.updated`, `*`.
+Event types: `approval.requested`, `message.created`, `agent.status_changed`, `workspace.updated`, `*`.
 
 ### 5.8 Events & Subscriptions
 
@@ -1004,13 +1004,13 @@ spec:
 ```
 
 ```
-POST   /apis/relay/v1/eventproviders                         — создать event provider
-GET    /apis/relay/v1/eventproviders                         — список event providers
-GET    /apis/relay/v1/eventproviders/{name}                  — получить event provider
-DELETE /apis/relay/v1/eventproviders/{name}                  — удалить event provider
+POST   /apis/relay/v1/eventproviders                         — create event provider
+GET    /apis/relay/v1/eventproviders                         — list event providers
+GET    /apis/relay/v1/eventproviders/{name}                  — get event provider
+DELETE /apis/relay/v1/eventproviders/{name}                  — delete event provider
 ```
 
-Каждый webhook-based provider получает endpoint: `POST /hooks/{provider-name}`.
+Each webhook-based provider gets an endpoint: `POST /hooks/{provider-name}`.
 
 #### WorkspaceTemplate
 
@@ -1040,11 +1040,11 @@ spec:
 ```
 
 ```
-POST   /apis/relay/v1/templates                              — создать template
-GET    /apis/relay/v1/templates                              — список templates
-GET    /apis/relay/v1/templates/{name}                       — получить template
-PUT    /apis/relay/v1/templates/{name}                       — обновить template
-DELETE /apis/relay/v1/templates/{name}                       — удалить template
+POST   /apis/relay/v1/templates                              — create template
+GET    /apis/relay/v1/templates                              — list templates
+GET    /apis/relay/v1/templates/{name}                       — get template
+PUT    /apis/relay/v1/templates/{name}                       — update template
+DELETE /apis/relay/v1/templates/{name}                       — delete template
 ```
 
 #### Subscription
@@ -1063,11 +1063,11 @@ spec:
 ```
 
 ```
-POST   /apis/relay/v1/subscriptions                          — создать subscription
-GET    /apis/relay/v1/subscriptions                          — список subscriptions
-GET    /apis/relay/v1/subscriptions/{name}                   — получить subscription
-PUT    /apis/relay/v1/subscriptions/{name}                   — обновить subscription
-DELETE /apis/relay/v1/subscriptions/{name}                   — удалить subscription
+POST   /apis/relay/v1/subscriptions                          — create subscription
+GET    /apis/relay/v1/subscriptions                          — list subscriptions
+GET    /apis/relay/v1/subscriptions/{name}                   — get subscription
+PUT    /apis/relay/v1/subscriptions/{name}                   — update subscription
+DELETE /apis/relay/v1/subscriptions/{name}                   — delete subscription
 ```
 
 ### 5.9 Audit
@@ -1089,35 +1089,35 @@ spec:
 
 ```
 GET    /apis/relay/v1/workspaces/{name}/audit                — audit log
-GET    /apis/relay/v1/workspaces/{name}/audit?subject={subject}&action={action}&from={ts}&to={ts} — фильтрация
+GET    /apis/relay/v1/workspaces/{name}/audit?subject={subject}&action={action}&from={ts}&to={ts} — filter
 ```
 
 ---
 
 ## 6. Data Plane: ACP
 
-Для взаимодействия внутри workspace используется ACP. Когда workspace запущен, он выставляет ACP endpoint (в `status.acpEndpoint`). Участники подключаются к нему для:
+ACP is used for interaction within a workspace. When a workspace is running, it exposes an ACP endpoint (in `status.acpEndpoint`). Participants connect to it for:
 
-- Отправки сообщений агентам
-- Получения ответов и streaming
-- Tool calls внутри workspace environment
-- Чтения history
+- Sending messages to agents
+- Receiving responses and streaming
+- Tool calls within the workspace environment
+- Reading history
 
-ACP используется как subspec — Agent Relay не переопределяет формат сообщений, а делегирует это ACP.
+ACP is used as a subspec — Agent Relay does not redefine message format but delegates this to ACP.
 
-### Пример flow
+### Example Flow
 
-1. `POST /apis/relay/v1/workspaces` — создали workspace (Relay API)
-2. Runtime запускает environment и агентов
-3. `GET /apis/relay/v1/workspaces/payments-debug` — получили `status.acpEndpoint`
-4. Человек подключается к `acp://payments-debug@relay.example.com` — это ACP
-5. Внутри ACP — общение с агентами, tool calls, history
+1. `POST /apis/relay/v1/workspaces` — created workspace (Relay API)
+2. Runtime launches environment and agents
+3. `GET /apis/relay/v1/workspaces/payments-debug` — obtained `status.acpEndpoint`
+4. Human connects to `acp://payments-debug@relay.example.com` — this is ACP
+5. Inside ACP — communication with agents, tool calls, history
 
 ---
 
 ## 7. Lifecycle
 
-### Workspace phases
+### Workspace Phases
 
 ```
 Pending --> Starting --> Running --> Stopping --> Stopped --> Archived
@@ -1127,11 +1127,11 @@ Pending --> Starting --> Running --> Stopping --> Stopped --> Archived
                       \--> Failed
 ```
 
-В состоянии Running workspace может создавать checkpoints и откатываться к ним. Clone создаёт новый workspace (Pending) из checkpoint любого workspace (включая Stopped/Archived).
+In the Running state, a workspace can create checkpoints and roll back to them. Clone creates a new workspace (Pending) from a checkpoint of any workspace (including Stopped/Archived).
 
-Environment имеет собственный lifecycle (те же phases). Можно перезапустить без пересоздания workspace.
+Environment has its own lifecycle (same phases). It can be restarted without recreating the workspace.
 
-### Agent phases
+### Agent Phases
 
 ```
 Pending --> Starting --> Running --> Stopping --> Stopped
@@ -1143,16 +1143,16 @@ Pending --> Starting --> Running --> Stopping --> Stopped
 
 ## 8. Errors
 
-Стандартные HTTP status codes:
+Standard HTTP status codes:
 
-| Code | Описание |
+| Code | Description |
 |---|---|
-| 400 | Невалидный запрос |
-| 401 | Не аутентифицирован |
-| 403 | Нет доступа |
-| 404 | Ресурс не найден |
-| 409 | Конфликт состояния |
-| 429 | Превышена квота |
+| 400 | Invalid request |
+| 401 | Not authenticated |
+| 403 | Access denied |
+| 404 | Resource not found |
+| 409 | State conflict |
+| 429 | Quota exceeded |
 
 ```json
 { "kind": "Status", "code": 403, "reason": "Forbidden", "message": "subject alice@example.com does not have permission shell.execute" }
@@ -1162,7 +1162,7 @@ Pending --> Starting --> Running --> Stopping --> Stopped
 
 ## 9. Watch Events
 
-Доставляются через SSE при `?watch=true`. Формат:
+Delivered via SSE with `?watch=true`. Format:
 
 ```json
 { "type": "ADDED | MODIFIED | DELETED", "object": { "kind": "...", "metadata": {}, "spec": {}, "status": {} } }
@@ -1173,24 +1173,24 @@ Pending --> Starting --> Running --> Stopping --> Stopped
 ## 10. Runtime API
 
 ```
-GET    /apis/relay/v1/health     — статус runtime
-GET    /apis/relay/v1/whoami     — текущий пользователь и его права
+GET    /apis/relay/v1/health     — runtime status
+GET    /apis/relay/v1/whoami     — current user and their permissions
 ```
 
 ---
 
 ## Open Questions
 
-- ~~**Multi-tenancy / Organizations**~~ — решено через Namespace (см. 3.12).
-- **Secrets management** — как хранятся, ротируются, кто имеет доступ к secrets в environment. Нужен ли отдельный Secret ресурс или интеграция с Vault/KMS.
-- ~~**History / Conversation model**~~ — решено: history это ACP-артефакт, Relay хранит и даёт read-only API (см. 4.4, 5.2).
-- **Agent-to-agent communication** — могут ли агенты внутри workspace общаться друг с другом напрямую или только через shared environment и ACP.
-- ~~**Persistence / Snapshots**~~ — решено через Checkpoint (см. 4.4, 5.2).
-- **Quotas & Limits** — лимиты на ресурсы: workspaces, агенты, tool calls, storage, compute per workspace/user/org.
-- **API versioning** — стратегия эволюции API, backwards compatibility, deprecation policy.
+- ~~**Multi-tenancy / Organizations**~~ — resolved via Namespace (see 3.12).
+- **Secrets management** — how secrets are stored, rotated, and who has access to secrets in the environment. Whether a separate Secret resource or integration with Vault/KMS is needed.
+- ~~**History / Conversation model**~~ — resolved: history is an ACP artifact, Relay stores and provides a read-only API (see 4.4, 5.2).
+- **Agent-to-agent communication** — whether agents within a workspace can communicate directly with each other or only through the shared environment and ACP.
+- ~~**Persistence / Snapshots**~~ — resolved via Checkpoint (see 4.4, 5.2).
+- **Quotas & Limits** — resource limits: workspaces, agents, tool calls, storage, compute per workspace/user/org.
+- **API versioning** — API evolution strategy, backwards compatibility, deprecation policy.
 
 ---
 
 ## Bottom Line
 
-Agent Relay Protocol — стандартный API для создания workspace и запуска агентов в общей контролируемой среде, где люди подключаются, делегируют доступы и безопасно работают вместе с агентами.
+Agent Relay Protocol is a standard API for creating workspaces and launching agents in a shared controlled environment where humans connect, delegate access, and safely work together with agents.
