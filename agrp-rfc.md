@@ -26,32 +26,36 @@ Without AGRP, the current protocol stack solves individual links such as editor-
     |
  [Chat / CLI / IDE]
     |
- [Realm Exchange] ---------------- trusted links ---------------- [Other Realms]
+ [Realm Exchanges] ---------------- trusted links ---------------- [Other Realms]
     | \
-    |  +--> [Agent Sidecars + Agents]
-    |  +--> [Files / Context / Resources]
+    |  +--> [Realm State]
+    |        +--> [Agent Sidecars + Agents]
+    |        +--> [Files / Context / Resources]
+    |        +--> [Audit Log]
     |
-    +--> [Audit Log]
-
- [Control Plane] -------------------------------> [Realm Exchange]
+ [Control Plane] -------------------------------> [Realm Exchanges]
  [Control Plane] -------------------------------> [Create / Pause / Resume / Route]
 ```
 
 ## High-Level Exchange View
 
-At runtime, AGRP centers work around an Exchange. Humans and bridges connect to the Exchange, the Control Plane and ARLM manage lifecycle around it, and every agent is represented through a 1:1 attached sidecar. The sidecar speaks AGSP, receives delegated requests plus signed mandates, and invokes or polls the passive agent locally.
+At runtime, AGRP centers work around a Realm and its Exchanges. Humans and bridges connect to a specific Exchange for that Realm, the Control Plane and ARLM manage lifecycle around the shared realm state, and every agent is represented through a 1:1 attached sidecar. The sidecar speaks AGSP, receives delegated requests plus signed mandates, and invokes or polls the passive agent locally.
 
 ```
- [Human User] ------------------------------------------\
- [Human Channel] -- bridge session ---------------------+--> [Realm Exchange] --> [Audit Log]
- [Peer Exchange / Federated Link] -- trusted AGSP link -----/
+ [Human User] ---------------------------------------------\
+ [Human Channel] -- bridge session ------------------------+--> [Realm Exchange A]
+ [Peer Exchange / Federated Link] -- trusted AGSP link --------/
+                                                           |
+ [Control Plane] -- routing + policy + lifecycle --------> [Realm Exchange B]
+ [Control Plane] -- spawn / suspend / resume -----------> [Agent Runtime Lifecycle Manager]
+                                                           |
+ [Realm Exchange A] -- authorized access ---------------> [Realm State]
+ [Realm Exchange B] -- authorized access ---------------> [Realm State]
+ [Realm State] -----------------------------------------> [Audit Log]
 
- [Control Plane] -- routing + policy + lifecycle -----> [Realm Exchange]
- [Control Plane] -- spawn / suspend / resume ---------> [Agent Runtime Lifecycle Manager]
-
- [Realm Exchange] -- delegated text + signed mandate -> [Sidecar: agent1] -- invoke / poll -> [Passive Agent 1]
- [Realm Exchange] -- delegated text + signed mandate -> [Sidecar: agent2] -- invoke / poll -> [Passive Agent 2]
- [Realm Exchange] -- resource_call -------------------> [Environment / Resource Service]
+ [Realm Exchange A] -- delegated text + signed mandate -> [Sidecar: agent1] -- invoke / poll -> [Passive Agent 1]
+ [Realm Exchange B] -- delegated text + signed mandate -> [Sidecar: agent2] -- invoke / poll -> [Passive Agent 2]
+ [Realm Exchange A] -- resource_call -------------------> [Environment / Resource Service]
 
  [Agent Runtime Lifecycle Manager] -- spawns + resumes -----> [Sidecar: agent1]
  [Agent Runtime Lifecycle Manager] -- spawns + resumes -----> [Sidecar: agent2]
@@ -158,9 +162,9 @@ This last property is the key architectural insight: **Exchange-to-Exchange comm
 
 ### 2.3 Realm
 
-A Realm is the primary user-facing abstraction in AGRP. It is a **managed collaboration unit** that bundles:
+A Realm is the primary user-facing abstraction in AGRP. It is a **managed, stateful collaboration unit** with one or more Exchanges as ingress points into shared realm state. A Realm bundles:
 
-- **An Exchange** — the underlying switching node
+- **One or more Exchanges** — switching nodes that expose the Realm to participants and peer Exchanges
 - **An Environment Resource Service** — an abstract provider of context, environment resources, and realm information
 - **Agents** — one or more, each with a harness and model configuration
 - **Members** — humans with roles (owner, admin, member) and permissions
@@ -169,7 +173,16 @@ A Realm is the primary user-facing abstraction in AGRP. It is a **managed collab
 
 A Realm has a hierarchical identifier: `{namespace}/{name}` (e.g., `myns/myproject`). Realms are managed by the Control Plane and have a defined lifecycle: `creating → running → suspended → running → terminated`.
 
-The relationship between Realm and Exchange: a Realm always has exactly one Exchange. The Exchange handles switching; the Realm provides identity, state, and lifecycle. Multiple Realms may run on the same physical infrastructure but their Exchanges are logically isolated. This RFC intentionally keeps the environment model abstract; concrete resource schemas are left to a separate companion Environment/Resource RFC.
+The relationship between Realm and Exchange is strict but not 1:1: a Realm owns identity, mutable state, and lifecycle, while one or more Exchanges act as doors into that state. An Exchange handles switching and policy enforcement for the traffic that enters through it, but it does not define the Realm's identity by itself. The Control Plane may place multiple Exchanges in front of the same Realm for availability, locality, or load distribution. Multiple Realms may run on the same physical infrastructure but their state and policy boundaries remain logically isolated.
+
+From an implementation point of view, a Realm may be realized as a stateful runtime unit, for example a Kubernetes StatefulSet pod with attached persistent storage such as a PVC. This RFC does not require Kubernetes or PVCs, but it does require the same semantics: the Realm owns mutable state together with a controlled interface for reading and mutating that state.
+
+Realm state is not modified by arbitrary participant traffic. In base AGRP, Realm state changes happen only through two paths:
+
+1. Control Plane commands that create, suspend, resume, terminate, or reconfigure the Realm
+2. Exchange-mediated operations that satisfy realm-local roles, mandate scope, and approval policy before the Exchange proxies them to the Environment/Resource service or other authorized realm-local handlers
+
+This RFC intentionally keeps the internal state layout abstract. Concrete resource schemas, storage formats, and mutation interfaces are left to a separate companion Environment/Resource RFC.
 
 ### 2.4 AGSP Bridge
 
@@ -474,6 +487,8 @@ For cross-realm operations in v1, approval is governed by the **source realm** p
 
 ## 5. Realm Lifecycle
 
+Realm lifecycle describes the runtime envelope around a stable stateful unit. Realm identity and persistent mutable state may outlive any particular Exchange process, agent process, or sidecar session. Lifecycle transitions are commanded by the Control Plane; participant-originated changes flow only through a running Exchange for that Realm and only when authorized by realm policy.
+
 ### 5.1 State Machine
 
 ```
@@ -503,6 +518,13 @@ For cross-realm operations in v1, approval is governed by the **source realm** p
                └──────────────────┘
 ```
 
+State semantics:
+
+- **Creating** — the Control Plane allocates realm identity, provisions or attaches persistent realm state, and asks the ARLM to start the runtime components. The Realm does not yet admit normal participant traffic.
+- **Running** — at least one Exchange for the Realm is live, agents and sidecars may be connected, and authorized Exchange-mediated operations may mutate realm state according to role, mandate, and approval policy. Control Plane commands may still reconfigure or suspend the Realm.
+- **Suspended** — persistent realm state is retained, but live compute is released. No Exchange for the Realm admits traffic, channel bindings are inactive, and participant-originated mutations do not run. Only the Control Plane may resume, reconfigure, or terminate the Realm.
+- **Terminated** — the Realm is no longer routable. Runtime components are gone, and the deployment either deletes or archives persistent state according to its retention policy.
+
 ### 5.2 Create
 
 Creating a realm requires an identity, an initial membership set, an agent harness/model selection, and any initial environment or context inputs required by the deployment.
@@ -510,17 +532,19 @@ Creating a realm requires an identity, an initial membership set, an agent harne
 The Control Plane:
 
 1. Allocates realm identity `myns/myproject`
-2. Instructs the ARLM to provision environment resources and context handles
-3. Spawns an Exchange for the realm
+2. Instructs the ARLM to provision or attach persistent realm state, environment resources, and context handles
+3. Spawns one or more Exchanges for the Realm
 4. Instructs the ARLM to spawn the agent with the specified harness and model, together with its attached sidecar
 5. Registers the creator as `owner`
 6. Updates routing tables
 
 ### 5.3 Suspend and Resume
 
-Suspending a realm preserves the control-plane snapshot and the environment/resource handles but releases live compute resources. The Exchange is terminated and the agent process is stopped.
+Suspending a realm preserves the control-plane snapshot and the realm's persistent state and environment/resource handles but releases live compute resources. All Exchanges for the Realm are terminated and agent processes are stopped. In a StatefulSet-style deployment, persistent storage remains attached while live processes are released.
 
-Resuming restores the environment/resource handles, spawns a new Exchange, reconnects the agent as a new session, and re-establishes channel bindings. The agent cold-starts; live session migration and audit-log replay are not part of the v1 recovery model.
+While suspended, the Realm does not accept normal participant traffic and Exchange-mediated mutation paths are inactive because no Realm Exchange is serving requests.
+
+Resuming restores the persistent state and environment/resource handles, spawns one or more Exchanges, reconnects the agent as a new session, and re-establishes channel bindings. The agent cold-starts; live session migration and audit-log replay are not part of the v1 recovery model.
 
 The new session is established by the attached sidecar, not by the agent process directly.
 
@@ -532,7 +556,7 @@ The Control Plane:
 
 1. Registers the channel binding metadata
 2. Spawns or configures a Telegram Bridge process
-3. The bridge opens an AGSP session to the realm's Exchange
+3. The bridge opens an AGSP session to one of the Realm's Exchanges selected by deployment policy
 4. Messages in the Telegram thread flow bidirectionally through the bridge
 
 A realm can have multiple channels simultaneously. Each channel binding maps a specific external resource (thread, channel, conversation) to the realm. The binding is 1:1 — one external thread maps to exactly one realm.
@@ -541,7 +565,9 @@ A realm can have multiple channels simultaneously. Each channel binding maps a s
 
 ## 6. Control Plane State Model
 
-The Control Plane maintains the following state (Raft-replicated):
+The Control Plane maintains the following state (Raft-replicated). This model captures the Control Plane's authoritative metadata view, not the internal byte layout of realm-local mutable state. Deployment-specific realm state may live in persistent storage attached to the realm runtime, but AGRP constrains how it changes: via Control Plane commands or via Exchange-mediated authorized operations only.
+
+The first example below shows a **single Realm exposed through multiple Exchanges**. The Exchanges are distinct ingress points into the same realm state and policy boundary, not separate Realms.
 
 ```yaml
 cluster:
@@ -551,7 +577,7 @@ cluster:
 realms:
   myns/myproject:
     status: running
-    exchange: exchange-7a3f
+    exchanges: [exchange-7a3f, exchange-7a40]
     environment:
       service: ers-01
       status: ready
@@ -605,6 +631,11 @@ exchanges:
     participants:
       - { name: claude, role: agent }
       - { name: user1, role: human }
+  exchange-7a40:
+    endpoint: "10.0.0.2:7000"
+    realm: myns/myproject
+    status: healthy
+    participants:
       - { name: user2, role: human, via: telegram }
       - { name: telegram-bridge-01, role: bridge }
 
@@ -612,6 +643,9 @@ routes:
   exchange-7a3f:
     claude: local
     user1: local
+    user2: via exchange-7a40
+  exchange-7a40:
+    claude: via exchange-7a3f
     user2: local (via telegram-bridge-01)
 
 links: {}
