@@ -258,7 +258,6 @@ runtime_profiles:
         command: /opt/agents/claude-acp-launcher
         args: []
         env:
-          REALM_ID: myns/myproject
           WORKDIR: /var/lib/agrp/realms/myns-myproject
       acp:
         transport: stdio
@@ -266,9 +265,10 @@ runtime_profiles:
     sidecar:
       join:
         protocol: agsp
+        exchange_ref: exchange-7a3f
+        endpoint: ws://10.0.0.1:7000/agsp
         role: agent
         participant_name: claude
-        realm: myns/myproject
       mandate_verification:
         required: true
     wiring:
@@ -276,7 +276,7 @@ runtime_profiles:
       exchange_channel: agsp
 ```
 
-This example is non-normative. The exact Claude launcher path, arguments, and environment variables are implementation-specific; AGRP only requires that the ARLM start the agent and attached sidecar and wire **ACP** between sidecar and agent and **AGSP** between sidecar and Exchange.
+This example is non-normative. The sidecar joins the **Exchange** identified by `exchange_ref` and `endpoint`. Realm association, when present, is assigned by the Exchange from Control Plane state rather than supplied by the participant during join. The exact Claude launcher path, arguments, environment variables, and Exchange endpoint discovery mechanism are implementation-specific; AGRP only requires that the ARLM start the agent and attached sidecar and wire **ACP** between sidecar and agent and **AGSP** between sidecar and Exchange.
 
 ---
 
@@ -365,7 +365,7 @@ sequenceDiagram
     ARLM->>AG: start agent process
     ARLM->>SC: start attached sidecar
     SC->>AG: ACP initialize / attach
-    SC->>EX: AGSP initialize(role=agent, realm?)
+    SC->>EX: AGSP initialize(role=agent)
     EX-->>SC: AGSP initialize_response
     SC->>EX: AGSP ready
     HB->>EX: AGSP delegated text / request
@@ -380,8 +380,8 @@ Join and interaction flow in base AGRP v1:
 
 1. The Control Plane tells the ARLM to start the agent and its attached sidecar.
 2. The sidecar establishes an ACP session with the agent process.
-3. The sidecar joins the Exchange over **AGSP** with role `agent` and optional `realm`.
-4. The Exchange returns session metadata, capabilities, and the current routing snapshot.
+3. The sidecar joins the Exchange over **AGSP** with role `agent`.
+4. The Exchange returns session metadata, capabilities, and the current routing snapshot, and may associate the session with a Realm from Control Plane state.
 5. Humans, bridges, or peer Exchanges send AGRP-routed messages to the Exchange; the Exchange delivers delegated work to the sidecar over **AGSP**.
 6. The sidecar forwards delegated work to the agent over **ACP**.
 7. The agent replies over **ACP**; the sidecar translates that reply back into **AGSP** and sends it to the Exchange for routing, fan-out, approvals, or resource mediation under **AGRP** rules.
@@ -442,8 +442,7 @@ Participant                          Exchange
     |    { protocol_version,           |
     |      role,                       |
     |      participant_info,           |
-    |      capabilities,               |
-    |      realm? }                |
+    |      capabilities }          |
     |                                  |
     |←── initialize_response ─────────|
     |    { exchange_info,                  |
@@ -468,7 +467,7 @@ The `role` field indicates participant type:
 
 Exchanges treat all roles uniformly for message forwarding. The role is metadata for fan-out rules, observability, and authorization policy — not routing. The attached sidecar is modeled as an internal child session, but the Exchange projects it as the parent logical `agent` participant. Because every agent is sidecar-backed in AGRP v1, transport-mode negotiation is not required in AGSP session setup.
 
-The `realm` field in `agsp/initialize` is optional. It is present when the session is bound to a managed Realm and omitted for standalone stateless Exchanges.
+In base AGSP, participants join an Exchange without declaring a Realm. If the Exchange serves a managed Realm, it associates the session with that Realm using Control Plane state. Participants do not need to understand realm topology to open an AGSP session.
 
 ### 4.3 Message Envelope
 
@@ -498,16 +497,16 @@ Fields:
 | `id` | yes | Unique message identifier (UUID) |
 | `correlation_id` | correlated flows only | Shared identifier linking related request, chunk, result, end, and approval messages |
 | `from` | yes | Sender identity (agent name, human username, bridge ID) |
-| `to` | except `exchange_message` | Destination: local agent name, `agrp://namespace/realm/agent`, `resource://namespace/realm/resource`, `*` for broadcast, or `role:...` for role-based fan-out |
-| `source_realm` | cross-realm only | Source realm identifier (`namespace/name`) |
-| `destination_realm` | cross-realm only | Destination realm identifier (`namespace/name`) |
+| `to` | except `exchange_message` | Destination: local participant name, optional canonical agent/resource URI, `*` for broadcast, or `role:...` for role-based fan-out |
+| `source_realm` | Exchange-added for cross-realm forwarding | Source realm identifier (`namespace/name`) |
+| `destination_realm` | Exchange-added for cross-realm forwarding | Destination realm identifier (`namespace/name`) |
 | `exchange_src` | inter-Exchange forwarding only | Identifier of the Exchange that last forwarded the envelope, used for traceability and trust decisions |
 | `mandate` | delegated sidecar and direct resource requests | Inline signed claim object issued and signed by the current Exchange for local enforcement, always including an expiry |
 | `type` | yes | Message type (see §4.4) |
 | `ttl` | yes | Time-to-live, decremented at each Exchange hop. Dropped at 0. |
 | `payload` | yes | Opaque to AGRP. Application-level content. |
 
-For same-realm traffic bound to a single session realm, `source_realm` and `destination_realm` MAY be omitted. When omitted, the Exchange resolves both values from the session realm context. For sessions not bound to any Realm, both fields MUST be omitted. For cross-realm traffic, both fields MUST be present. During inter-Exchange forwarding, `exchange_src` MUST be present and identify the forwarding Exchange that placed the envelope on the current Exchange-to-Exchange hop. AGSP field names shown in this RFC use `snake_case`. At minimum, a signed `mandate` binds the subject, any applicable realm identifier, resource scope, and expiry, where scope is either an explicit resource set or `*` for all resources in scope. Related `resource_call`, `resource_chunk`, `resource_result`, `resource_end`, and approval messages reuse the same `correlation_id`.
+Participants normally omit `source_realm` and `destination_realm`. The Exchange derives and attaches them when cross-realm forwarding is required. For purely local traffic they are omitted. During inter-Exchange forwarding, both fields and `exchange_src` MUST be present and identify the forwarding context placed on the current Exchange-to-Exchange hop. AGSP field names shown in this RFC use `snake_case`. At minimum, a signed `mandate` binds the subject, any Exchange-assigned realm context if present, resource scope, and expiry, where scope is either an explicit resource set or `*` for all resources in scope. Related `resource_call`, `resource_chunk`, `resource_result`, `resource_end`, and approval messages reuse the same `correlation_id`.
 
 ### 4.4 Message Types
 
@@ -539,7 +538,7 @@ An Exchange implements the following fan-out rules:
 - **`to: "role:human"`** — deliver to all participants with role `human` or `bridge` (bridges represent human channels)
 - **`to: "role:agent"`** — deliver to all participants with role `agent`
 
-If the session is realm-bound, the current Exchange scope is the current Realm. Otherwise it is the local standalone Exchange participant set.
+The current Exchange scope is assigned by the Exchange. In a realm-backed Exchange it usually corresponds to that Realm's participant set. In a standalone Exchange it is the local participant set.
 
 Default behavior: when an agent sends a `text` message without an explicit `to`, the Exchange defaults to `role:human` — the message fans out to all human participants and bridges in the current Exchange scope. This is how a single agent response appears in both CLI and Telegram simultaneously.
 
@@ -551,7 +550,7 @@ Direct resource targeting uses `resource://namespace/realm/resource` URIs. For h
 
 ### 4.6 Delegation
 
-Delegation is not a separate AGSP primitive. A client or bridge delegates by sending a normal `text` message whose `to` field is a specific agent URI such as `agrp://myns/myproject/claude`.
+Delegation is not a separate AGSP primitive. A client or bridge delegates by sending a normal `text` message whose `to` field is a specific local participant name or an Exchange-resolved agent URI such as `agrp://myns/myproject/claude`.
 
 Delegation carries only the selected message content, not an implicit reference to prior exchange history. Delegation targets a single agent, and the base realm default is that any member may delegate unless the realm policy overrides it.
 
@@ -807,19 +806,19 @@ routes:
 
 ## 7. Agent Addressing
 
-Agents and participants are addressed either by local logical name or by a canonical agent URI. Resolution is handled by the Exchange using its local routing table.
+Agents and participants are addressed either by local logical name or by a canonical agent URI. Resolution is handled by the Exchange using its local routing table. Local names are the primary participant-facing form; canonical URIs are stable system addresses used by Exchanges, the Control Plane, and advanced clients.
 
 ### 7.1 Addressing Schemes
 
 | Form | Example | Usage |
 |---|---|---|
 | **Local** | `claude` | Resolved only within the current Exchange scope |
-| **Agent URI** | `agrp://myns/infra/infra-agent` | Route to a specific agent in a specific realm |
-| **Resource URI** | `resource://myns/myproject/root` | Route a direct resource request through the Exchange to the Environment/Resource service |
+| **Agent URI** | `agrp://myns/infra/infra-agent` | Stable system address for a specific agent; typically produced by Control Plane or Exchange metadata |
+| **Resource URI** | `resource://myns/myproject/root` | Stable system address for a realm resource; routed through the Exchange to the Environment/Resource service |
 | **Role-based** | `role:human` | Fan-out to all participants matching the role |
 | **Broadcast** | `*` | Fan-out to all participants in the current Exchange scope |
 
-Agents may use local names only for same-scope delivery. When the session is realm-bound, that scope is the current Realm. Cross-realm delivery uses canonical agent URIs. Direct resource access uses `resource://` URIs. Role-based and broadcast addressing are used for fan-out within the current Exchange scope.
+Participants normally use local names for same-scope delivery. Cross-realm delivery, when needed, uses canonical agent URIs resolved by Exchange routing state. Direct resource access uses `resource://` URIs. Role-based and broadcast addressing are used for fan-out within the current Exchange scope.
 
 ### 7.2 Cross-Realm Addressing
 
@@ -995,7 +994,7 @@ The following topics require further specification:
 - **Companion Environment/Resource RFC:** The separate environment/resource specification still needs the concrete `resource_call`, `resource_chunk`, and `resource_result` payload schemas, `resource_approval_policy` schema, lifecycle semantics, and required metadata.
 - **Delegation policy overrides:** Base AGRP defaults delegation to any member, but the realm-level override schema is still open.
 - **Capability-based routing extension:** Capability multicast is deferred to a future optional extension and is not part of base AGRP.
-- **Standalone Exchange scope model:** The RFC now distinguishes realm-bound sessions from standalone stateless Exchanges, but it still needs a normative name and initialization model for the local participant scope used when no Realm is attached.
+- **Standalone Exchange scope model:** The RFC now distinguishes Exchange-assigned local scope from realm-backed scope, but it still needs a short normative term for the participant scope used when no Realm is attached.
 
 ---
 

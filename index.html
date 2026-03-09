@@ -371,7 +371,7 @@ flowchart TB
 sequenceDiagram
     participant P as Participant
     participant R as Exchange
-    P->>R: agsp/initialize<br/>protocol_version, role,<br/>participant_info, capabilities, realm
+    P->>R: agsp/initialize<br/>protocol_version, role,<br/>participant_info, capabilities
     R-->>P: initialize_response<br/>exchange_info, capabilities,<br/>members, routing_snapshot
     P->>R: agsp/ready
     Note over P,R: Bidirectional messaging
