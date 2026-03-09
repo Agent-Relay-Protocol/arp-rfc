@@ -254,7 +254,6 @@ runtime_profiles:
         args: ["run"]
     sidecar:
       join:
-        protocol: agsp
         endpoint: ws://exchange.internal/agsp
         role: agent
         participant_name: worker
