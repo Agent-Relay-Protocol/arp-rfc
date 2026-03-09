@@ -1158,7 +1158,6 @@ The following external protocols, interfaces, and standards are referenced in th
 ## Contributors
 
 * Aleksei Kudriashov  - akud.soft@gmail.com
-* Nikolai Ryzhikov (Helath Samurai) - niquola@health-samurai.io
 
 ---
 
